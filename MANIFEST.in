@@ -1,0 +1,7 @@
+include README.md
+recursive-include runner *.java *.sh
+recursive-include tests *.py
+exclude first-test.log
+prune .agent
+prune runner/build
+

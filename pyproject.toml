@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "android-db-mcp"
+version = "0.1.0"
+description = "MCP access to Android SQLite databases and osapiens business objects"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["mcp>=1,<3"]
+
+[project.optional-dependencies]
+semantic = ["fastembed>=0.8,<1", "numpy>=1.24,<3"]
+test = ["numpy>=1.24,<3"]
+
+[project.scripts]
+android-db-mcp = "android_db_mcp:main"
+
+[tool.setuptools]
+py-modules = ["android_db_mcp", "bo_codec"]
+
