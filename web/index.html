@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Object Explorer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ctext y='19' font-size='19'%3E%F0%9F%97%84%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.5" ry="3.1"/><path d="M4.5 5.5v13c0 1.7 3.4 3.1 7.5 3.1s7.5-1.4 7.5-3.1v-13"/><path d="M4.5 12c0 1.7 3.4 3.1 7.5 3.1s7.5-1.4 7.5-3.1"/></svg>
+      <span>Object&nbsp;Explorer</span>
+    </div>
+    <span class="chip" id="c-device">…</span>
+    <span class="chip" id="c-tenant"></span>
+    <span class="chip" id="c-backend"></span>
+    <span class="grow"></span>
+    <button class="ghost" id="palette-btn" title="Command palette">⌘K</button>
+    <input type="search" id="q" placeholder="Search keys, titles, any field value…" autocomplete="off" spellcheck="false">
+    <button class="ghost" id="density" title="Row height">≡</button>
+    <button class="ghost" id="secrets" title="Secrets are masked — click to reveal">◉</button>
+    <button class="ghost" id="theme" title="Toggle theme">◐</button>
+    <button id="reload" title="Re-read everything from the device">Reload</button>
+  </header>
+
+  <div id="body">
+    <nav id="sidebar">
+      <div class="side-search"><input type="search" id="navq" placeholder="Filter…" autocomplete="off"></div>
+      <div id="nav"></div>
+      <div class="side-foot"><span id="side-stats"></span></div>
+    </nav>
+    <div id="resizer" title="Drag to resize"></div>
+    <main id="view"><div class="loading">Loading…</div></main>
+  </div>
+
+  <div id="drawer" class="hidden"><div class="drawer-head"><span id="drawer-title"></span><button class="ghost" id="drawer-close">✕</button></div><div id="drawer-body"></div></div>
+
+  <div id="palette" class="hidden">
+    <div class="pal-box">
+      <input type="text" id="pal-input" placeholder="Jump to a pool, table or view…" autocomplete="off">
+      <div id="pal-list"></div>
+    </div>
+  </div>
+  <div id="toast" class="hidden"></div>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

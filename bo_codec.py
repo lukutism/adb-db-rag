@@ -30,43 +30,89 @@ class DecodeError(ValueError):
     pass
 
 
+# Every scalar in every object goes through these, so they are written for the profiler, not for
+# looks: the buffer length is cached, struct formats are compiled once and read straight out of the
+# buffer with unpack_from, and the single-byte reads index instead of slicing.
+_S_i8 = struct.Struct(">b")
+_S_i16 = struct.Struct(">h")
+_S_u16 = struct.Struct(">H")
+_S_i32 = struct.Struct(">i")
+_S_i64 = struct.Struct(">q")
+_S_f32 = struct.Struct(">f")
+_S_f64 = struct.Struct(">d")
+
+
 class _Reader:
-    __slots__ = ("b", "i")
+    __slots__ = ("b", "i", "n")
 
     def __init__(self, b: bytes):
-        self.b, self.i = b, 0
+        self.b, self.i, self.n = b, 0, len(b)
 
     def take(self, n: int) -> bytes:
-        if self.i + n > len(self.b):
-            raise DecodeError(f"truncated: need {n} bytes at {self.i}, have {len(self.b) - self.i}")
-        out = self.b[self.i:self.i + n]
-        self.i += n
-        return out
+        i = self.i
+        end = i + n
+        if end > self.n:
+            raise DecodeError(f"truncated: need {n} bytes at {i}, have {self.n - i}")
+        self.i = end
+        return self.b[i:end]
 
-    def u8(self) -> int: return self.take(1)[0]
-    def i8(self) -> int: return struct.unpack(">b", self.take(1))[0]
-    def i16(self) -> int: return struct.unpack(">h", self.take(2))[0]
-    def u16(self) -> int: return struct.unpack(">H", self.take(2))[0]
-    def i32(self) -> int: return struct.unpack(">i", self.take(4))[0]
-    def i64(self) -> int: return struct.unpack(">q", self.take(8))[0]
-    def f32(self) -> float: return struct.unpack(">f", self.take(4))[0]
-    def f64(self) -> float: return struct.unpack(">d", self.take(8))[0]
+    def _fixed(self, st: struct.Struct):
+        i = self.i
+        end = i + st.size
+        if end > self.n:
+            raise DecodeError(f"truncated: need {st.size} bytes at {i}, have {self.n - i}")
+        self.i = end
+        return st.unpack_from(self.b, i)[0]
+
+    def u8(self) -> int:
+        i = self.i
+        if i >= self.n:
+            raise DecodeError(f"truncated: need 1 byte at {i}, have 0")
+        self.i = i + 1
+        return self.b[i]
+
+    def i8(self) -> int: return self._fixed(_S_i8)
+    def i16(self) -> int: return self._fixed(_S_i16)
+    def u16(self) -> int: return self._fixed(_S_u16)
+    def i32(self) -> int: return self._fixed(_S_i32)
+    def i64(self) -> int: return self._fixed(_S_i64)
+    def f32(self) -> float: return self._fixed(_S_f32)
+    def f64(self) -> float: return self._fixed(_S_f64)
 
 
 def _modified_utf8(b: bytes) -> str:
-    # Java "modified UTF-8": NUL as C0 80, supplementary chars as encoded surrogate pairs.
-    b = b.replace(b"\xc0\x80", b"\x00")
+    """Java "modified UTF-8": NUL as C0 80, supplementary characters as encoded surrogate pairs.
+
+    The two special cases are rare and the strings are mostly ASCII, so both are detected with a
+    C-level byte search rather than by walking the decoded string. Scanning every character with
+    `any(0xD800 <= ord(ch) <= 0xDFFF ...)` was a quarter of all host CPU in this tool."""
+    if b.isascii():
+        return b.decode("ascii")                 # the overwhelming majority of strings
+    if b"\xc0\x80" in b:
+        b = b.replace(b"\xc0\x80", b"\x00")
     s = b.decode("utf-8", "surrogatepass")
-    if any(0xD800 <= ord(ch) <= 0xDFFF for ch in s):
+    # a surrogate always encodes as ED A0 80 … ED BF BF, so no 0xED means no surrogates
+    if b"\xed" in b and any(0xD800 <= ord(ch) <= 0xDFFF for ch in s):
         s = s.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
     return s
 
 
 def _read(r: _Reader, nested: bool = True) -> Any:
+    """Decode one value.
+
+    The branches are ordered by how often each tag actually occurs in this data, measured over
+    30,440 values: STRING 65%, LIST 9%, MAP 8%, INT/BYTES 5% each, the rest below 4%. Strings used
+    to be the sixteenth comparison in the chain, so two thirds of all values paid fifteen failed
+    tests before matching."""
     t = r.u8()
-    if t == T_NULL:
-        return None
-    if t in (T_MAP, T_MAP_SORTED):
+    if t == T_STRING:
+        return _modified_utf8(r.take(r.u16()))
+    if t == T_LIST or t == T_SET or t == T_SET_SORTED or t == T_ARRAY:
+        n = r.i32()
+        if n < 0:
+            return None
+        return [_read(r, nested) for _ in range(n)]
+    if t == T_MAP or t == T_MAP_SORTED:
         n = r.i32()
         if n < 0:
             return None
@@ -76,11 +122,8 @@ def _read(r: _Reader, nested: bool = True) -> Any:
             v = _read(r, nested)
             out[k if isinstance(k, (str, int, float, bool)) or k is None else str(k)] = v
         return out
-    if t in (T_LIST, T_SET, T_SET_SORTED, T_ARRAY):
-        n = r.i32()
-        if n < 0:
-            return None
-        return [_read(r, nested) for _ in range(n)]
+    if t == T_INT:
+        return r.i32()
     if t == T_BYTES:
         n = r.i32()
         if n < 0:
@@ -95,20 +138,18 @@ def _read(r: _Reader, nested: bool = True) -> Any:
         return {"$bytes": len(raw), "$b64": base64.b64encode(raw).decode()} if n <= 4096 else {"$bytes": len(raw)}
     if t == T_BOOL:
         return r.u8() != 0
-    if t == T_BYTE:
-        return r.i8()
-    if t == T_SHORT:
-        return r.i16()
-    if t == T_INT:
-        return r.i32()
+    if t == T_NULL:
+        return None
     if t == T_LONG:
         return r.i64()
-    if t == T_FLOAT:
-        return r.f32()
     if t == T_DOUBLE:
         return r.f64()
-    if t == T_STRING:
-        return _modified_utf8(r.take(r.u16()))
+    if t == T_SHORT:
+        return r.i16()
+    if t == T_BYTE:
+        return r.i8()
+    if t == T_FLOAT:
+        return r.f32()
     if t == T_STRING_LARGE:
         return r.take(r.i32()).decode("utf-8", "replace")
     if t == T_BIGINT:
@@ -195,6 +236,69 @@ def encode(obj: Any) -> bytes:
 
     w(obj)
     return bytes(out)
+
+
+# ------------------------------------------------------------------ in-place editing
+#
+# decode() -> encode() does NOT round-trip: decode collapses LONG/SHORT/BYTE/FLOAT to plain Python
+# numbers and BYTES to a {"$b64": ...} dict, so re-encoding a real object silently retypes fields
+# (a LONG BreakdownDuration comes back an INT, and the app's Java deserializer gets the wrong
+# class). Editing therefore replaces one value's byte span and leaves every other byte untouched.
+
+_CONTAINERS = (T_LIST, T_SET, T_SET_SORTED, T_ARRAY)
+_MAPS = (T_MAP, T_MAP_SORTED)
+_FIXED = {T_LONG: ">q", T_INT: ">i", T_SHORT: ">h", T_BYTE: ">b", T_DOUBLE: ">d", T_FLOAT: ">f"}
+
+
+def _walk(r: "_Reader", path: str, out: dict) -> None:
+    start, t = r.i, r.b[r.i]
+    if t in _CONTAINERS:
+        r.u8()
+        n = r.i32()
+        for i in range(max(n, 0)):
+            _walk(r, f"{path}[{i}]", out)
+    elif t in _MAPS:
+        r.u8()
+        n = r.i32()
+        for _ in range(max(n, 0)):
+            k = _read(r)
+            _walk(r, f"{path}.{k}" if path else str(k), out)
+    else:
+        _read(r)                      # scalars: let the decoder do the skipping
+    out[path] = (start, r.i, t)
+
+
+def spans(blob: bytes) -> dict[str, tuple[int, int, int]]:
+    """path -> (start, end, type tag) for every value in the blob. Paths are dotted, with [i] for
+    list elements: "Items", "Items[0].DamageCode", "ChangeControl.Source". The root is ""."""
+    r = _Reader(bytes(blob))
+    out: dict[str, tuple[int, int, int]] = {}
+    _walk(r, "", out)
+    return out
+
+
+def _encode_as(tag: int, value: Any) -> bytes:
+    """Encode `value` keeping the slot's original type where it is a fixed-width number, so an
+    edit cannot retype a field. Replacing a whole list/map re-encodes its contents with encode()'s
+    default widths.
+    ponytail: subtree widths, add per-node tag carry-over if a nested LONG ever matters."""
+    if value is None:
+        return bytes([T_NULL])
+    if tag in _FIXED and isinstance(value, (int, float)) and not isinstance(value, bool):
+        fmt = _FIXED[tag]
+        return bytes([tag]) + struct.pack(fmt, int(value) if tag not in (T_DOUBLE, T_FLOAT) else value)
+    return encode(value)
+
+
+def splice(blob: bytes, path: str, value: Any) -> bytes:
+    """Replace the value at `path` with `value`, byte-for-byte identical everywhere else."""
+    blob = bytes(blob)
+    found = spans(blob)
+    if path not in found:
+        near = [p for p in found if p.startswith(path.split("[")[0].split(".")[0])][:8]
+        raise KeyError(f"no value at path {path!r}" + (f"; nearby: {', '.join(near)}" if near else ""))
+    start, end, tag = found[path]
+    return blob[:start] + _encode_as(tag, value) + blob[end:]
 
 
 # ------------------------------------------------------------------ text helpers for retrieval
@@ -291,17 +395,44 @@ def get_path(obj: Any, path: str) -> Any:
     return cur
 
 
-def display_title(obj: Any, locale: str = "en") -> str | None:
-    """Best-effort human label of an object: Title/Name/Label/Description (translated or plain)."""
-    if not isinstance(obj, dict):
-        return None
-    for k in ("Title", "title", "Name", "name", "Label", "label", "DisplayName", "displayName", "Description", "description"):
+_TITLE_KEYS = ("Title", "title", "Name", "name", "Label", "label",
+               "DisplayName", "displayName", "Description", "description")
+
+
+def _title_here(obj: dict, locale: str) -> str | None:
+    for k in _TITLE_KEYS:
         if k in obj:
             t = resolve_locale(obj[k], locale)
             if t:
                 return t
             if isinstance(obj[k], str) and obj[k].strip():
                 return obj[k]
+    return None
+
+
+def display_title(obj: Any, locale: str = "en") -> str | None:
+    """Best-effort human label of an object: Title/Name/Label/Description (translated or plain).
+
+    Some pools keep the label one level down instead of at the top — a SmartForm's name lives at
+    `Text.Title`, not `Title` — so when nothing is found at the top level this looks inside nested
+    objects (and the first element of nested lists) one level deep, in the order the object stores
+    them. Without that, most of those objects show up everywhere as untitled."""
+    if not isinstance(obj, dict):
+        return None
+    top = _title_here(obj, locale)
+    if top:
+        return top
+    for v in obj.values():
+        if isinstance(v, dict):
+            if "$b64" in v or "$bytes" in v or "$undecoded" in v:
+                continue
+            nested = _title_here(v, locale)
+            if nested:
+                return nested
+        elif isinstance(v, list) and v and isinstance(v[0], dict):
+            nested = _title_here(v[0], locale)
+            if nested:
+                return nested
     return None
 
 

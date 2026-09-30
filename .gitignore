@@ -8,3 +8,6 @@ runner/build/
 .agent/
 *.log
 
+
+.bench/
+evals/

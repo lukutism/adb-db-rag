@@ -18,7 +18,7 @@ import org.json.JSONObject;
  *
  * Response (JSON on stdout):
  *   read : {"columns":[...], "rows":[[...],...], "row_count":n, "truncated":bool}
- *   write: {"ok":true, "changes":n}
+ *   write: {"ok":true, "changes":n}      mode "dryrun": same statement inside a rolled-back transaction
  *   ping : {"ok":true, "serve":true, "version":2}
  *   error: {"error":"..."}   (exit code 1 in one-shot mode)
  *
@@ -73,15 +73,16 @@ public final class Main {
                 JSONObject pong = new JSONObject();
                 pong.put("ok", true);
                 pong.put("serve", true);
-                pong.put("version", 2);
+                pong.put("version", 3);
+                pong.put("dryrun", true);
                 return pong.toString();
             }
             String db = req.getString("db");
             String sql = req.getString("sql");
             int limit = req.optInt("limit", 200);
             boolean b64 = "base64".equals(req.optString("blobs", "summary"));
-            if ("write".equals(mode)) {
-                return write(db, sql).toString();
+            if ("write".equals(mode) || "dryrun".equals(mode)) {
+                return write(db, sql, "dryrun".equals(mode)).toString();
             }
             return read(db, sql, limit, b64).toString();
         } catch (Throwable t) {
@@ -154,20 +155,34 @@ public final class Main {
         }
     }
 
-    private static JSONObject write(String path, String sql) throws Exception {
+    /**
+     * Execute a write. With dryRun the statement runs inside a transaction that is never marked
+     * successful, so endTransaction rolls it back — the caller still learns how many rows it would
+     * have touched, which is the only safe way to check a WHERE clause against live app data.
+     */
+    private static JSONObject write(String path, String sql, boolean dryRun) throws Exception {
         SQLiteDatabase db = SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READWRITE);
         try {
-            db.execSQL(sql);
             JSONObject res = new JSONObject();
-            res.put("ok", true);
-            Cursor c = db.rawQuery("SELECT changes()", null);
+            db.beginTransaction();
             try {
-                if (c.moveToFirst()) {
-                    res.put("changes", c.getLong(0));
+                db.execSQL(sql);
+                Cursor c = db.rawQuery("SELECT changes()", null);
+                try {
+                    if (c.moveToFirst()) {
+                        res.put("changes", c.getLong(0));
+                    }
+                } finally {
+                    c.close();
+                }
+                if (!dryRun) {
+                    db.setTransactionSuccessful();
                 }
             } finally {
-                c.close();
+                db.endTransaction();   // without setTransactionSuccessful this rolls back
             }
+            res.put("ok", true);
+            res.put("dry_run", dryRun);
             return res;
         } finally {
             db.close();

@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Object Explorer</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#161920; --panel-2:#1c2028; --line:#272c37;
+    --ink:#e6e9ef; --ink-dim:#9aa3b2; --ink-faint:#6b7486;
+    --accent:#6ea8fe; --accent-dim:#2d4a7c; --warn:#e0a458; --ok:#6cc08b; --edge:#454e60;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f6f7f9; --panel:#fff; --panel-2:#f0f2f5; --line:#dfe3ea;
+           --ink:#1a1d23; --ink-dim:#5b6472; --ink-faint:#8b94a3;
+           --accent:#2563c9; --accent-dim:#bcd2f5; --warn:#a96b1a; --ok:#2f7d51; --edge:#a7b0bf; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  header{display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  h1{font-size:14px;margin:0;font-weight:600;letter-spacing:.01em}
+  .chip{font:11px/1 var(--mono);color:var(--ink-dim);background:var(--panel-2);border:1px solid var(--line);padding:5px 8px;border-radius:99px;white-space:nowrap}
+  .grow{flex:1}
+  input[type=search]{background:var(--panel-2);border:1px solid var(--line);color:var(--ink);padding:7px 10px;border-radius:7px;font:13px var(--sans);min-width:260px}
+  input[type=search]:focus{outline:none;border-color:var(--accent)}
+  button{background:var(--panel-2);border:1px solid var(--line);color:var(--ink);padding:7px 11px;border-radius:7px;font:13px var(--sans);cursor:pointer}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  main{flex:1;display:flex;min-height:0}
+  #graph{flex:1 1 56%;position:relative;border-right:1px solid var(--line);min-width:0;display:flex;flex-direction:column}
+  #graph svg{flex:1;width:100%;min-height:0;display:block;cursor:grab}
+  #graph svg.drag{cursor:grabbing}
+  aside{flex:1 1 44%;min-width:340px;max-width:720px;display:flex;flex-direction:column;background:var(--panel);min-height:0}
+  .bar{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);flex-wrap:wrap;min-height:42px}
+  .crumbs{font:11px var(--mono);color:var(--ink-faint);display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+  .crumbs a{color:var(--accent);cursor:pointer;text-decoration:none}
+  .body{overflow:auto;padding:12px 14px;flex:1}
+  .hint{color:var(--ink-faint);font-size:13px;padding:22px 4px;max-width:44ch;line-height:1.65}
+  h2{font-size:15px;margin:0 0 2px;font-weight:600}
+  .sub{color:var(--ink-dim);font:11px var(--mono);margin-bottom:14px;word-break:break-all}
+  .sec{font:10px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink-faint);margin:18px 0 7px;border-top:1px solid var(--line);padding-top:12px}
+  .sec:first-of-type{border-top:none;margin-top:6px;padding-top:0}
+  .row{display:flex;gap:10px;padding:5px 7px;border-radius:6px;cursor:pointer;align-items:baseline}
+  .row:hover{background:var(--panel-2)}
+  .row .k{font:11px var(--mono);color:var(--ink-faint);flex:0 0 96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .n{font:10px var(--mono);color:var(--ink-faint)}
+  .ref{display:inline-flex;align-items:center;gap:7px;background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:5px 9px;margin:0 5px 5px 0;cursor:pointer;max-width:100%}
+  .ref:hover{border-color:var(--accent)}
+  .ref.dead{cursor:not-allowed;opacity:.55;border-style:dashed}
+  .ref .p{font:10px var(--mono);color:var(--ink-faint)}
+  .ref .v{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  td{padding:3px 8px 3px 0;vertical-align:top;border-bottom:1px solid var(--line)}
+  td.p{font:11px var(--mono);color:var(--ink-faint);width:38%;word-break:break-all}
+  .node text{font:13px var(--sans);fill:var(--ink);pointer-events:none;user-select:none}
+  .node circle{fill:var(--panel-2);stroke:var(--line);stroke-width:1.5px;cursor:pointer;transition:stroke .12s,fill .12s}
+  .node:hover circle{stroke:var(--accent)}
+  .node.sel circle{fill:var(--accent);stroke:var(--accent)}
+  .node.sel text{font-weight:600}
+  .node.dim{opacity:.22}
+  .edge{stroke:var(--edge);fill:none;stroke-width:1.5px}
+  .edge.partial{stroke:var(--warn);stroke-dasharray:4 3}
+  .edge.hot{stroke:var(--accent);stroke-width:2px;opacity:1}
+  .edge.dim{opacity:.1}
+  .legend{font:10px var(--mono);color:var(--ink-faint);gap:16px;background:var(--panel)}
+  .legend button{font-size:11px;padding:3px 9px}
+  #loose{border-top:1px solid var(--line);padding:8px 12px;max-height:22%;overflow:auto;background:var(--panel)}
+  #loose .lbl{font:10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px}
+  #loose .chips{display:flex;flex-wrap:wrap;gap:5px}
+  #loose .c{font:11px var(--sans);background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:3px 8px;cursor:pointer;color:var(--ink-dim)}
+  #loose .c:hover{border-color:var(--accent);color:var(--accent)}
+  #loose .c.sel{background:var(--accent);border-color:var(--accent);color:#fff}
+  #loose .c b{font-weight:500;color:var(--ink)}
+  #loose .c .n{font:10px var(--mono);color:var(--ink-faint);margin-left:5px}
+  .err{color:var(--warn);font:12px var(--mono);white-space:pre-wrap}
+  .pill{font:10px var(--mono);padding:1px 6px;border-radius:99px;border:1px solid var(--line);color:var(--ink-faint)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Object Explorer</h1>
+  <span class="chip" id="c-device">…</span>
+  <span class="chip" id="c-tenant"></span>
+  <span class="chip" id="c-stats"></span>
+  <span class="grow"></span>
+  <input type="search" id="q" placeholder="key, title or any field value — e.g. 10002" autocomplete="off">
+  <button id="reload" title="Re-read everything from the device">Reload</button>
+</header>
+<main>
+  <div id="graph">
+    <div class="bar legend">
+      <span>○ pool · size = objects</span>
+      <span style="color:var(--warn)">╌ dashed = some ids don't resolve</span>
+      <span class="grow"></span>
+      <span>drag to pan · scroll to zoom</span>
+      <button id="fit" title="Fit the graph back into view">Fit</button>
+    </div>
+    <svg id="svg"></svg>
+    <div id="loose"></div>
+  </div>
+  <aside>
+    <div class="bar"><div class="crumbs" id="crumbs"></div></div>
+    <div class="body" id="detail"><div class="hint">Click a pool in the graph, or search for an id.<br><br>Every arrow here was derived by decoding objects and checking that the ids actually resolve — none of it comes from the SQLite schema, which has no foreign keys at all.</div></div>
+  </aside>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let STATE = null, NODES = [], EDGES = [], sel = null, trail = [];
+
+async function api(p, opts) { const r = await fetch(p, opts); const j = await r.json(); if (j.error) throw new Error(j.error); return j; }
+
+// ---------------------------------------------------------------- layout
+function layout(nodes, edges, w, h) {
+  const idx = new Map(nodes.map(n => [n.name, n]));
+  nodes.forEach((n, i) => {
+    const a = 2 * Math.PI * i / nodes.length, r = Math.min(w, h) * 0.36;
+    n.x = w / 2 + Math.cos(a) * r; n.y = h / 2 + Math.sin(a) * r; n.vx = n.vy = 0;
+  });
+  const links = edges.map(e => [idx.get(e.from), idx.get(e.to)]).filter(([a, b]) => a && b && a !== b);
+  for (let it = 0; it < 420; it++) {
+    const cool = 1 - it / 420;
+    for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy || 0.01;
+      const d = Math.sqrt(d2), f = 14000 / d2;
+      a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f;
+    }
+    for (const [a, b] of links) {
+      let dx = b.x - a.x, dy = b.y - a.y; const d = Math.hypot(dx, dy) || 0.01;
+      const f = (d - 165) * 0.022;
+      a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f;
+    }
+    for (const n of nodes) {
+      n.vx += (w / 2 - n.x) * 0.0022; n.vy += (h / 2 - n.y) * 0.0022;
+      n.x += n.vx * cool * 0.5; n.y += n.vy * cool * 0.5; n.vx *= 0.86; n.vy *= 0.86;
+      const m = 20 + labelW(n) / 2;
+      n.x = Math.max(m, Math.min(w - m, n.x)); n.y = Math.max(26, Math.min(h - 26, n.y));
+    }
+  }
+}
+
+function radius(n) { return 7 + Math.min(17, Math.sqrt(n.rows || 1) * 2.1); }
+function labelW(n) { return String(n.name).length * 7.2; }
+
+// Force layout leaves labels overlapping; nudge them apart before measuring the drawing.
+function separateLabels(nodes) {
+  for (let it = 0; it < 140; it++) {
+    let moved = false;
+    for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      const need = labelW(a) / 2 + labelW(b) / 2 + 8;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const ox = need - Math.abs(dx), oy = 19 - Math.abs(dy);
+      if (ox > 0 && oy > 0) {
+        const px = Math.min(ox, 11) / 2 * (dx < 0 ? -1 : 1);
+        const py = Math.min(oy, 7) / 2 * (dy < 0 ? -1 : 1);
+        a.x -= px; b.x += px; a.y -= py; b.y += py;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+}
+
+function drawGraph() {
+  // Lay out in a fixed virtual space and fit the result to the pane, so the drawing never
+  // depends on the window size and never gets clipped.
+  const linked = NODES.filter(n => n.in > 0 || n.out > 0);
+  const loose = NODES.filter(n => n.in === 0 && n.out === 0 && n.rows > 0);
+  drawLoose(loose);
+  const nodes = linked;
+  const pane = $("#svg").getBoundingClientRect();
+  const w = 1500, h = Math.max(620, Math.round(w * (pane.height || 700) / (pane.width || 900)));
+  layout(nodes, EDGES, w, h);
+  separateLabels(nodes);
+  const pos = new Map(nodes.map(n => [n.name, n]));
+  let paths = "", circles = "";
+  EDGES.forEach((e, i) => {
+    const a = pos.get(e.from), b = pos.get(e.to);
+    if (!a || !b || a === b) return;
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+    const bow = 22 * (i % 2 ? 1 : -1);
+    const cx = mx - dy / d * bow, cy = my + dx / d * bow;
+    const rb = radius(b) + 6;
+    const ex = b.x - dx / d * rb, ey = b.y - dy / d * rb;
+    const cls = "edge" + (e.resolved_rate < 1 ? " partial" : "");
+    paths += `<path class="${cls}" data-from="${esc(e.from)}" data-to="${esc(e.to)}" marker-end="url(#a)" `
+          + `d="M${a.x.toFixed(1)},${a.y.toFixed(1)} Q${cx.toFixed(1)},${cy.toFixed(1)} ${ex.toFixed(1)},${ey.toFixed(1)}">`
+          + `<title>${esc(e.from)}.${esc(e.path)} → ${esc(e.to)}${e.many ? " (many)" : ""}\n`
+          + `${e.links} links, ${Math.round(e.resolved_rate * 100)}% resolve</title></path>`;
+  });
+  nodes.forEach(n => {
+    circles += `<g class="node" data-pool="${esc(n.name)}" transform="translate(${n.x.toFixed(1)},${n.y.toFixed(1)})">`
+      + `<circle r="${radius(n).toFixed(1)}"><title>${esc(n.name)} — ${n.rows} objects, ${n.out} outgoing, ${n.in} incoming</title></circle>`
+      + `<text y="${(radius(n) + 15).toFixed(1)}" text-anchor="middle">${esc(n.name)}</text></g>`;
+  });
+  $("#svg").innerHTML =
+    `<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">`
+    + `<path d="M0,1 L9,5 L0,9 z" fill="var(--edge)"/></marker></defs>`
+    + `<g id="cam">${paths}${circles}</g>`;
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  nodes.forEach(n => {
+    const hw = Math.max(radius(n), labelW(n) / 2), r = radius(n);
+    x0 = Math.min(x0, n.x - hw); x1 = Math.max(x1, n.x + hw);
+    y0 = Math.min(y0, n.y - r);  y1 = Math.max(y1, n.y + r + 20);
+  });
+  const pad = 30;
+  $("#svg").setAttribute("viewBox", `${(x0 - pad).toFixed(0)} ${(y0 - pad).toFixed(0)} `
+    + `${(x1 - x0 + pad * 2).toFixed(0)} ${(y1 - y0 + pad * 2).toFixed(0)}`);
+  $("#svg").querySelectorAll(".node").forEach(g =>
+    g.addEventListener("click", () => openPool(g.dataset.pool)));
+  highlight();
+  installPanZoom();
+}
+
+function drawLoose(loose) {
+  const el = $("#loose");
+  if (!loose.length) { el.innerHTML = ""; el.style.display = "none"; return; }
+  el.style.display = "";
+  el.innerHTML = `<div class="lbl">${loose.length} pools with no references in or out</div><div class="chips">`
+    + loose.sort((a, b) => b.rows - a.rows).map(n =>
+        `<span class="c" data-pool="${esc(n.name)}"><b>${esc(n.name)}</b><span class="n">${n.rows}</span></span>`).join("")
+    + `</div>`;
+  el.querySelectorAll(".c").forEach(c => c.addEventListener("click", () => openPool(c.dataset.pool)));
+}
+
+function highlight() {
+  document.querySelectorAll(".node").forEach(g => {
+    const on = !sel || g.dataset.pool === sel ||
+      EDGES.some(e => (e.from === sel && e.to === g.dataset.pool) || (e.to === sel && e.from === g.dataset.pool));
+    g.classList.toggle("sel", g.dataset.pool === sel);
+    g.classList.toggle("dim", !!sel && !on);
+  });
+  document.querySelectorAll("#loose .c").forEach(c => c.classList.toggle("sel", c.dataset.pool === sel));
+  document.querySelectorAll(".edge").forEach(p => {
+    const on = !sel || p.dataset.from === sel || p.dataset.to === sel;
+    p.classList.toggle("hot", !!sel && on);
+    p.classList.toggle("dim", !!sel && !on);
+  });
+}
+
+let cam = { x: 0, y: 0, k: 1 };
+function applyCam() { const g = $("#cam"); if (g) g.setAttribute("transform", `translate(${cam.x},${cam.y}) scale(${cam.k})`); }
+function installPanZoom() {
+  const svg = $("#svg"); let dragging = false, sx = 0, sy = 0;
+  svg.onmousedown = e => { if (e.target.closest(".node")) return; dragging = true; sx = e.clientX - cam.x; sy = e.clientY - cam.y; svg.classList.add("drag"); };
+  window.onmouseup = () => { dragging = false; svg.classList.remove("drag"); };
+  window.onmousemove = e => { if (!dragging) return; cam.x = e.clientX - sx; cam.y = e.clientY - sy; applyCam(); };
+  svg.onwheel = e => { e.preventDefault(); const f = e.deltaY < 0 ? 1.12 : 0.89; cam.k = Math.max(0.3, Math.min(3, cam.k * f)); applyCam(); };
+  applyCam();
+}
+
+// ---------------------------------------------------------------- panel
+function crumbs() {
+  $("#crumbs").innerHTML = trail.map((t, i) =>
+    `<a data-i="${i}">${esc(t.label)}</a>`).join(' <span style="opacity:.5">›</span> ') || "";
+  $("#crumbs").querySelectorAll("a").forEach(a => a.addEventListener("click", () => {
+    const t = trail[+a.dataset.i]; trail = trail.slice(0, +a.dataset.i);
+    t.kind === "pool" ? openPool(t.pool) : openObject(t.pool, t.key);
+  }));
+}
+
+async function openPool(name, push = true) {
+  sel = name; highlight();
+  if (push) trail = [{ kind: "pool", pool: name, label: name }];
+  crumbs();
+  const d = await api(`/api/pool?name=${encodeURIComponent(name)}`);
+  const outs = EDGES.filter(e => e.from === name), ins = EDGES.filter(e => e.to === name);
+  $("#detail").innerHTML =
+    `<h2>${esc(name)}</h2><div class="sub">${d.total} objects · showing ${d.shown}</div>`
+    + (outs.length ? `<div class="sec">references out</div>` + outs.map(e =>
+        `<div class="ref" data-pool="${esc(e.to)}"><span class="p">${esc(e.path)}</span>→<span class="v">${esc(e.to)}</span>`
+        + `<span class="pill">${e.many ? "many" : "one"}</span>`
+        + (e.resolved_rate < 1 ? `<span class="pill" style="color:var(--warn)">${Math.round(e.resolved_rate * 100)}% resolve</span>` : "")
+        + `</div>`).join("") : "")
+    + (ins.length ? `<div class="sec">referenced by</div>` + ins.map(e =>
+        `<div class="ref" data-pool="${esc(e.from)}"><span class="v">${esc(e.from)}</span><span class="p">${esc(e.path)}</span></div>`).join("") : "")
+    + `<div class="sec">objects</div>`
+    + (d.objects.length ? d.objects.map(o =>
+        `<div class="row" data-key="${esc(o.key)}"><span class="k">${esc(o.key)}</span>`
+        + `<span class="t">${esc(o.title || "—")}</span>`
+        + `<span class="n">${o.refs_in ? "←" + o.refs_in : ""}</span></div>`).join("")
+      : `<div class="hint">No objects in this pool.</div>`);
+  $("#detail").querySelectorAll(".row").forEach(r => r.addEventListener("click", () => openObject(name, r.dataset.key)));
+  $("#detail").querySelectorAll(".ref").forEach(r => r.addEventListener("click", () => openPool(r.dataset.pool)));
+}
+
+async function openObject(pool, key, push = true) {
+  sel = pool; highlight();
+  if (push) trail.push({ kind: "obj", pool, key, label: `${pool}/${key}` });
+  crumbs();
+  let o;
+  try { o = await api(`/api/object?pool=${encodeURIComponent(pool)}&key=${encodeURIComponent(key)}`); }
+  catch (e) { $("#detail").innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  const refChip = r => `<div class="ref${r.resolved ? "" : " dead"}" ${r.resolved ? `data-pool="${esc(r.pool)}" data-key="${esc(r.key)}"` : ""}>`
+    + `<span class="p">${esc(r.field || r.path)}</span>`
+    + `<span class="v">${esc(r.pool)}: ${esc(r.title || r.key)}</span>`
+    + (r.resolved ? "" : `<span class="pill" style="color:var(--warn)">missing</span>`) + `</div>`;
+  $("#detail").innerHTML =
+    `<h2>${esc(o.title || o.key)}</h2>`
+    + `<div class="sub">${esc(o.pool)} · key ${esc(o.key)} · thingId ${esc(o.thingId)} · lastChange ${esc(o.lastChange)}</div>`
+    + (o.refs_out.length ? `<div class="sec">references</div>` + o.refs_out.map(refChip).join("") : "")
+    + (o.refs_in.length ? `<div class="sec">referenced by (${o.refs_in.length})</div>`
+        + o.refs_in.map(r => `<div class="ref" data-pool="${esc(r.pool)}" data-key="${esc(r.key)}">`
+          + `<span class="v">${esc(r.pool)}: ${esc(r.title || r.key)}</span><span class="p">${esc(r.path)}</span></div>`).join("") : "")
+    + `<div class="sec">fields</div><table>`
+    + o.fields.map(f => `<tr><td class="p">${esc(f.path)}</td><td>${esc(f.text)}</td></tr>`).join("")
+    + `</table>`;
+  $("#detail").querySelectorAll(".ref[data-key]").forEach(r =>
+    r.addEventListener("click", () => openObject(r.dataset.pool, r.dataset.key)));
+}
+
+async function search(q) {
+  const d = await api(`/api/find?q=${encodeURIComponent(q)}`);
+  if (d.hits.length === 1) { trail = []; return openObject(d.hits[0].pool, d.hits[0].key); }
+  trail = [{ kind: "pool", pool: null, label: `search "${q}"` }];
+  crumbs();
+  $("#detail").innerHTML = `<h2>${d.total} match${d.total === 1 ? "" : "es"}</h2><div class="sub">for “${esc(q)}”</div>`
+    + (d.hits.length ? d.hits.map(h =>
+        `<div class="row" data-pool="${esc(h.pool)}" data-key="${esc(h.key)}">`
+        + `<span class="k">${esc(h.pool)}</span><span class="t">${esc(h.title || h.key)}</span>`
+        + `<span class="n">${esc(h.why)}</span></div>`).join("")
+      : `<div class="hint">Nothing matched. Search looks at keys, titles and every decoded field value.</div>`);
+  $("#detail").querySelectorAll(".row").forEach(r =>
+    r.addEventListener("click", () => openObject(r.dataset.pool, r.dataset.key)));
+}
+
+// ---------------------------------------------------------------- boot
+async function boot() {
+  let s;
+  try { s = await api("/api/state"); }
+  catch (e) { $("#detail").innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  STATE = s;
+  if (!s.loaded) { $("#detail").innerHTML = `<div class="err">${esc(s.error || "load failed")}</div>`; return; }
+  NODES = s.nodes; EDGES = s.edges;
+  $("#c-device").textContent = `${s.device.model || "device"} · ${s.device.serial}`;
+  $("#c-tenant").textContent = s.tenants[0] || "(app private)";
+  $("#c-stats").textContent = `${s.objects} objects · ${s.pools} pools · ${s.edges.length} edges · ${s.load_s}s`;
+  drawGraph();
+}
+$("#q").addEventListener("keydown", e => { if (e.key === "Enter" && e.target.value.trim()) search(e.target.value.trim()); });
+$("#reload").addEventListener("click", async () => {
+  $("#reload").textContent = "…";
+  try { await api("/api/reload", { method: "POST" }); await boot(); if (sel) openPool(sel); }
+  finally { $("#reload").textContent = "Reload"; }
+});
+$("#fit").addEventListener("click", () => { cam = { x: 0, y: 0, k: 1 }; applyCam(); });
+let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(drawGraph, 220); });
+boot();
+</script>
+</body>
+</html>

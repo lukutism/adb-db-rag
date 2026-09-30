@@ -4,4 +4,6 @@ recursive-include tests *.py
 exclude first-test.log
 prune .agent
 prune runner/build
-
+include HANDOFF.md
+include bench.py
+include eval.py
